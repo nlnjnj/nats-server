@@ -2865,9 +2865,104 @@ func TestJetStreamClusterPubAckSequenceDupe(t *testing.T) {
 		require_NoError(t, err)
 		require_Equal(t, seq, pubAck2.Sequence)
 		require_True(t, pubAck2.Duplicate)
-
 	}
+}
 
+func TestJetStreamClusterPubAckSequenceDupeAsync(t *testing.T) {
+	c := createJetStreamClusterExplicit(t, "TEST_CLUSTER", 3)
+	defer c.shutdown()
+
+	nc, js := jsClientConnect(t, c.randomServer())
+	defer nc.Close()
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:       "TEST_STREAM",
+		Subjects:   []string{"TEST_SUBJECT"},
+		Replicas:   3,
+		Duplicates: 1 * time.Minute,
+	})
+	require_NoError(t, err)
+
+	msgData := []byte("...")
+
+	for seq := uint64(1); seq < 10; seq++ {
+
+		msgSubject := "TEST_SUBJECT"
+		msgIdOpt := nats.MsgId(nuid.Next())
+
+		wg := sync.WaitGroup{}
+		wg.Add(2)
+
+		// Fire off 2 publish requests in parallel
+		// The first one "stages" a duplicate entry before even proposing the message
+		// The second one gets a pubAck with sequence zero by hitting the staged duplicated entry
+
+		pubAcks := [2]*nats.PubAck{}
+		for i := 0; i < 2; i++ {
+			go func(i int) {
+				defer wg.Done()
+				var err error
+				pubAcks[i], err = js.Publish(msgSubject, msgData, msgIdOpt)
+				require_NoError(t, err)
+			}(i)
+		}
+
+		wg.Wait()
+		require_Equal(t, pubAcks[0].Sequence, seq)
+		require_Equal(t, pubAcks[1].Sequence, seq)
+
+		// Exactly one of the pubAck should be marked dupe
+		require_True(t, (pubAcks[0].Duplicate || pubAcks[1].Duplicate) && (pubAcks[0].Duplicate != pubAcks[1].Duplicate))
+	}
+}
+
+func TestJetStreamClusterPubAckSequenceDupeDeterministic(t *testing.T) {
+	c := createJetStreamClusterExplicit(t, "R3S", 3)
+	defer c.shutdown()
+
+	nc, js := jsClientConnect(t, c.randomServer())
+	defer nc.Close()
+
+	duplicates := 2 * time.Minute
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:       "TEST",
+		Subjects:   []string{"foo"},
+		Replicas:   3,
+		Duplicates: duplicates,
+	})
+	require_NoError(t, err)
+
+	sl := c.streamLeader(globalAccountName, "TEST")
+	acc, err := sl.lookupAccount(globalAccountName)
+	require_NoError(t, err)
+	mset, err := acc.lookupStream("TEST")
+	require_NoError(t, err)
+
+	baseTs := time.Now().Add(-time.Hour)
+	ts := baseTs.UnixNano()
+	hdr := []byte("NATS/1.0\r\nNats-Msg-Id: msgId\r\n\r\n")
+
+	// First message is stored.
+	err = mset.processJetStreamMsg("foo", _EMPTY_, hdr, nil, 0, ts)
+	require_NoError(t, err)
+
+	// Second message sent at the same time is de-duped.
+	err = mset.processJetStreamMsg("foo", _EMPTY_, hdr, nil, 1, ts)
+	require_Error(t, err, errMsgIdDuplicate)
+
+	// Third message is also de-duped.
+	ts = baseTs.Add(duplicates).Add(-time.Nanosecond).UnixNano()
+	err = mset.processJetStreamMsg("foo", _EMPTY_, hdr, nil, 2, ts)
+	require_Error(t, err, errMsgIdDuplicate)
+
+	// Fourth message is exactly at the dupe window, must be accepted.
+	ts = baseTs.Add(duplicates).UnixNano()
+	err = mset.processJetStreamMsg("foo", _EMPTY_, hdr, nil, 3, ts)
+	require_NoError(t, err)
+
+	// Also confirm the leader can allow a message to go through, even if the purging timer hasn't cleaned it up yet.
+	err = mset.processClusteredInboundMsg("foo", _EMPTY_, hdr, nil)
+	require_NoError(t, err)
 }
 
 func TestJetStreamClusterConsumeWithStartSequence(t *testing.T) {

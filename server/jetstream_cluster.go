@@ -7903,6 +7903,7 @@ func (mset *stream) processClusteredInboundMsg(subject, reply string, hdr, msg [
 	}
 
 	// Some header checks can be checked pre proposal. Most can not.
+	var ts = time.Now().UnixNano()
 	var msgId string
 	if len(hdr) > 0 {
 		// Since we encode header len as u16 make sure we do not exceed.
@@ -7956,6 +7957,8 @@ func (mset *stream) processClusteredInboundMsg(subject, reply string, hdr, msg [
 		// Will help during restarts.
 		if msgId = getMsgId(hdr); msgId != _EMPTY_ {
 			mset.mu.Lock()
+			// Since purging is delayed for the clustered de-dupe map, deterministically try to purge based on timestamp.
+			mset.purgeMsgIdsAtLocked(ts)
 			if dde := mset.checkMsgId(msgId); dde != nil {
 				var buf [256]byte
 				pubAck := append(buf[:0], mset.pubAck...)
@@ -7968,9 +7971,9 @@ func (mset *stream) processClusteredInboundMsg(subject, reply string, hdr, msg [
 				}
 				return errMsgIdDuplicate
 			}
-			// FIXME(dlc) - locking conflict with accessing mset.clseq
-			// For now we stage with zero, and will update in processStreamMsg.
-			mset.storeMsgIdLocked(&ddentry{msgId, 0, time.Now().UnixNano()})
+			// We used to stage with zero, but it's hard to correctly remove it during leader elections
+			// while taking quorum/truncation into account. So instead let duplicates through and handle
+			// duplicates later. Only if we know the sequence we can start blocking above.
 			mset.mu.Unlock()
 		}
 	}
@@ -8030,7 +8033,7 @@ func (mset *stream) processClusteredInboundMsg(subject, reply string, hdr, msg [
 		}
 	}
 
-	esm := encodeStreamMsgAllowCompress(subject, reply, hdr, msg, mset.clseq, time.Now().UnixNano(), compressOK)
+	esm := encodeStreamMsgAllowCompress(subject, reply, hdr, msg, mset.clseq, ts, compressOK)
 	// Do proposal.
 	err := node.Propose(esm)
 	if err == nil {
