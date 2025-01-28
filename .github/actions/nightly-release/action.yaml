@@ -8,7 +8,8 @@ inputs:
 
   label:
     description: The label to use for built images
-    required: true
+    required: false
+    default: nightly
 
   hub_username:
     description: Docker hub username
@@ -51,9 +52,5 @@ runs:
       shell: bash
       run: |
         NDATE=$(date +%Y%m%d)
-
-        docker tag synadia/nats-server:nightly-${NDATE} synadia/nats-server:${{ inputs.label }}-${NDATE}
-        docker tag synadia/nats-server:nightly-${NDATE} synadia/nats-server:${{ inputs.label }}
-
         docker push synadia/nats-server:${{ inputs.label }}-${NDATE}
         docker push synadia/nats-server:${{ inputs.label }}

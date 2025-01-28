@@ -6,6 +6,11 @@ on:
         description: "Override image branch (optional)"
         type: string
         required: false
+      label:
+        description: "Override tag label (optional)"
+        type: string
+        required: false
+        default: "nightly"
 
   schedule:
     - cron: "40 4 * * *"
@@ -22,8 +27,8 @@ jobs:
 
       - uses: ./src/github.com/nats-io/nats-server/.github/actions/nightly-release
         with:
-          go: "1.21"
+          go: "stable"
           workdir: src/github.com/nats-io/nats-server
-          label: nightly
+          label: ${{ inputs.label }}
           hub_username: "${{ secrets.DOCKER_USERNAME }}"
           hub_password: "${{ secrets.DOCKER_PASSWORD }}"
