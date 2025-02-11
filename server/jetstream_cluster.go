@@ -32,6 +32,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/antithesishq/antithesis-sdk-go/assert"
+
 	"github.com/klauspost/compress/s2"
 	"github.com/minio/highwayhash"
 	"github.com/nats-io/nuid"
@@ -1193,6 +1195,10 @@ func (s *Server) checkForNRGOrphans() {
 
 	for _, n := range needDelete {
 		s.Warnf("Detected orphaned NRG %q, will cleanup", n.Group())
+		assert.Unreachable("detected orphaned NRG", map[string]any{
+			"group": n.Group(),
+			"state": n.State().String(),
+		})
 		n.Delete()
 	}
 }

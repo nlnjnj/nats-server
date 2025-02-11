@@ -26,10 +26,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/antithesishq/antithesis-sdk-go/assert"
 
 	"github.com/nats-io/nats-server/v2/internal/fastrand"
 
@@ -3991,6 +3994,11 @@ func (n *raft) setWriteErrLocked(err error) {
 		err == errPartialCache {
 		return
 	}
+
+	assert.Unreachable(fmt.Sprintf("setWriteErrLocked: %v", err), map[string]any{
+		"stack": string(debug.Stack()),
+	})
+
 	// If this is a not found report but do not disable.
 	if os.IsNotExist(err) {
 		n.error("Resource not found: %v", err)
