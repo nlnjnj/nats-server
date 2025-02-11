@@ -32,6 +32,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/antithesishq/antithesis-sdk-go/assert"
+
 	"github.com/klauspost/compress/s2"
 	"github.com/minio/highwayhash"
 	"github.com/nats-io/nuid"
@@ -1111,6 +1113,10 @@ func (js *jetStream) checkForOrphans() {
 		mset.mu.RLock()
 		accName, stream := mset.acc.Name, mset.cfg.Name
 		mset.mu.RUnlock()
+		assert.Unreachable("detected orphaned stream", map[string]any{
+			"account": accName,
+			"stream":  stream,
+		})
 		s.Warnf("Detected orphaned stream '%s > %s', will cleanup", accName, stream)
 		if err := mset.delete(); err != nil {
 			s.Warnf("Deleting stream encountered an error: %v", err)
@@ -1132,6 +1138,11 @@ func (js *jetStream) checkForOrphans() {
 			s.Debugf("Detected orphaned consumer '%s > %s > %s', will cleanup", accName, stream, consumer)
 		}
 
+		assert.Unreachable("detected orphaned consumer", map[string]any{
+			"account":  accName,
+			"stream":   stream,
+			"consumer": consumer,
+		})
 		if err := o.delete(); err != nil {
 			s.Warnf("Deleting consumer encountered an error: %v", err)
 		}
