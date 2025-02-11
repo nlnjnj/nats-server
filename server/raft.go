@@ -1765,6 +1765,7 @@ func (n *raft) Created() time.Time {
 
 func (n *raft) Stop() {
 	n.shutdown()
+	n.wg.Wait()
 }
 
 func (n *raft) WaitForStop() {
@@ -1774,8 +1775,7 @@ func (n *raft) WaitForStop() {
 }
 
 func (n *raft) Delete() {
-	n.shutdown()
-	n.wg.Wait()
+	n.Stop()
 
 	n.Lock()
 	defer n.Unlock()
