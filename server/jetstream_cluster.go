@@ -298,7 +298,7 @@ func (s *Server) JetStreamStepdownStream(account, stream string) error {
 		return err
 	}
 
-	if node := mset.raftNode(); node != nil && node.Leader() {
+	if node := mset.raftNode(); node != nil {
 		node.StepDown()
 	}
 
@@ -329,7 +329,7 @@ func (s *Server) JetStreamStepdownConsumer(account, stream, consumer string) err
 		return NewJSConsumerNotFoundError()
 	}
 
-	if node := o.raftNode(); node != nil && node.Leader() {
+	if node := o.raftNode(); node != nil {
 		node.StepDown()
 	}
 
@@ -2271,9 +2271,7 @@ func (js *jetStream) monitorStream(mset *stream, sa *streamAssignment, sendSnaps
 		if n.State() == Closed {
 			return
 		}
-		if n.Leader() {
-			n.StepDown()
-		}
+		n.StepDown()
 		// Drain the commit queue...
 		aq.drain()
 	}()
@@ -2808,11 +2806,11 @@ func (mset *stream) isMigrating() bool {
 func (mset *stream) resetClusteredState(err error) bool {
 	mset.mu.RLock()
 	s, js, jsa, sa, acc, node := mset.srv, mset.js, mset.jsa, mset.sa, mset.acc, mset.node
-	stype, isLeader, tierName, replicas := mset.cfg.Storage, mset.isLeader(), mset.tier, mset.cfg.Replicas
+	stype, tierName, replicas := mset.cfg.Storage, mset.tier, mset.cfg.Replicas
 	mset.mu.RUnlock()
 
 	// Stepdown regardless if we are the leader here.
-	if isLeader && node != nil {
+	if node != nil {
 		node.StepDown()
 	}
 

@@ -5610,9 +5610,7 @@ func (mset *stream) resetAndWaitOnConsumers() {
 
 	for _, o := range consumers {
 		if node := o.raftNode(); node != nil {
-			if o.IsLeader() {
-				node.StepDown()
-			}
+			node.StepDown()
 			node.Delete()
 		}
 		if o.isMonitorRunning() {
