@@ -34,12 +34,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/antithesishq/antithesis-sdk-go/assert"
 
 	"github.com/klauspost/compress/s2"
 	"github.com/minio/highwayhash"
@@ -1828,6 +1831,11 @@ func (fs *fileStore) recoverFullState() (rerr error) {
 	if !trackingStatesEqual(&fs.state, &mstate) {
 		os.Remove(fn)
 		fs.warn("Stream state encountered internal inconsistency on recover")
+		assert.Unreachable("internal inconsistency on recover", map[string]any{
+			"stream":   fs.cfg.Name,
+			"fs.state": fs.state,
+			"mstate":   mstate,
+		})
 		return errCorruptState
 	}
 
@@ -8914,10 +8922,20 @@ func (fs *fileStore) forceWriteFullState() error {
 // 2. PSIM - Per Subject Index Map - Tracks first and last blocks with subjects present.
 // 3. MBs - Index, Bytes, First and Last Sequence and Timestamps, and the deleted map (avl.seqset).
 // 4. Last block index and hash of record inclusive to this stream state.
-func (fs *fileStore) _writeFullState(force bool) error {
+func (fs *fileStore) _writeFullState(force bool) (rerr error) {
+	defer func() {
+		if force && rerr != nil {
+			assert.Unreachable(fmt.Sprintf("forceWriteFullState: %v", rerr), map[string]any{
+				"stream": fs.cfg.Name,
+				"stack":  string(debug.Stack()),
+			})
+		}
+	}()
+
 	start := time.Now()
 	fs.mu.Lock()
 	if fs.closed || fs.dirty == 0 {
+		fs.warn("Skipping writeFullState, force=%v, closed=%v, dirty=%d", force, fs.closed, fs.dirty)
 		fs.mu.Unlock()
 		return nil
 	}
@@ -9160,8 +9178,11 @@ func (fs *fileStore) stop(delete, writeState bool) error {
 		fs.mu.Unlock()
 		<-fsld
 		// Write full state if needed. If not dirty this is a no-op.
-		fs.forceWriteFullState()
+		err := fs.forceWriteFullState()
 		fs.mu.Lock()
+		if err != nil {
+			fs.warn("Stream state index not written: %v", err)
+		}
 	}
 
 	// Mark as closed. Last message block needs to be cleared after
