@@ -3441,6 +3441,8 @@ func (s *Server) jsMsgGetRequest(sub *subscription, c *client, _ *Account, subje
 		return
 	}
 
+	s.Debugf("jsMsgGetRequest: %v", req)
+
 	var svp StoreMsg
 	var sm *StoreMsg
 

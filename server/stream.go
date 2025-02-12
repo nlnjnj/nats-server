@@ -4579,6 +4579,8 @@ func (mset *stream) getDirectRequest(req *JSApiMsgGetRequest, reply string) {
 	store, name, s := mset.store, mset.cfg.Name, mset.srv
 	mset.mu.RUnlock()
 
+	s.Debugf("getDirectRequest: %v", req)
+
 	var seq uint64
 	// Lookup start seq if AsOfTime is set.
 	if req.StartTime != nil {

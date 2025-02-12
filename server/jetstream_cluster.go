@@ -2480,6 +2480,7 @@ func (js *jetStream) monitorStream(mset *stream, sa *streamAssignment, sendSnaps
 			}
 
 		case isLeader = <-lch:
+			s.Debugf("monitorStream, isLeader=%v", isLeader)
 			if isLeader {
 				if mset != nil && n != nil && sendSnapshot && !isRecovering {
 					// If we *are* recovering at the time then this will get done when the apply queue

@@ -4216,6 +4216,7 @@ func (n *raft) quorumNeeded() int {
 
 // Lock should be held.
 func (n *raft) updateLeadChange(isLeader bool) {
+	n.debug("updateLeadChange: %v", isLeader)
 	// We don't care about values that have not been consumed (transitory states),
 	// so we dequeue any state that is pending and push the new one.
 	for {
@@ -4250,6 +4251,7 @@ retry:
 	// Reset the election timer.
 	n.resetElectionTimeout()
 
+	n.debug("switchState, pstate=%s, state=%s", pstate.String(), state.String())
 	var leadChange bool
 	if pstate == Leader && state != Leader {
 		leadChange = true
@@ -4344,6 +4346,7 @@ func (n *raft) switchToLeader() {
 	n.updateLeader(n.id)
 	leadChange := n.switchState(Leader)
 
+	n.debug("switchToLeader: lseq=%d, pindex=%d, applied=%d, leadChange=%v", state.LastSeq, n.pindex, n.applied, leadChange)
 	if leadChange {
 		// Wait for messages to be applied if we've stored more, otherwise signal immediately.
 		// It's important to wait signaling we're leader if we're not up-to-date yet, as that
