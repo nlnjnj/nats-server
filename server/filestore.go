@@ -9150,6 +9150,7 @@ func (fs *fileStore) Stop() error {
 func (fs *fileStore) stop(delete, writeState bool) error {
 	fs.mu.Lock()
 	if fs.closed || fs.closing {
+		fs.warn("File store already closed.")
 		fs.mu.Unlock()
 		return ErrStoreClosed
 	}
@@ -9157,6 +9158,7 @@ func (fs *fileStore) stop(delete, writeState bool) error {
 	// Mark as closing. Do before releasing the lock to writeFullState
 	// so we don't end up with this function running more than once.
 	fs.closing = true
+	fs.warn("File store closing: %s", debug.Stack())
 
 	if writeState {
 		fs.checkAndFlushAllBlocks()
