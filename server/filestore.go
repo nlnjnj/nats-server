@@ -1830,7 +1830,7 @@ func (fs *fileStore) recoverFullState() (rerr error) {
 	// return and error so we rebuild from the message block state on disk.
 	if !trackingStatesEqual(&fs.state, &mstate) {
 		os.Remove(fn)
-		fs.warn("Stream state encountered internal inconsistency on recover")
+		fs.warn("Stream state encountered internal inconsistency on recover: %v vs %v", fs.state, mstate)
 		assert.Unreachable("internal inconsistency on recover", map[string]any{
 			"stream":   fs.cfg.Name,
 			"fs.state": fs.state,
@@ -9084,6 +9084,8 @@ func (fs *fileStore) _writeFullState(force bool) (rerr error) {
 	priorDirty := fs.dirty
 
 	statesEqual := trackingStatesEqual(&fs.state, &mstate)
+
+	fs.warn("Write full state: %v vs %v", fs.state, mstate)
 	// Release lock.
 	fs.mu.Unlock()
 
