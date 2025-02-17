@@ -7512,7 +7512,7 @@ func (mb *msgBlock) sinceLastWriteActivity() time.Duration {
 }
 
 func checkNewHeader(hdr []byte) error {
-	if hdr == nil || len(hdr) < 2 || hdr[0] != magic ||
+	if len(hdr) < 2 || hdr[0] != magic ||
 		(hdr[1] != version && hdr[1] != newVersion) {
 		return errCorruptState
 	}
@@ -8010,7 +8010,7 @@ func (fs *fileStore) compact(seq uint64, noMarkers bool) (uint64, error) {
 		if err == errDeletedMsg {
 			// Update dmap.
 			if !smb.dmap.IsEmpty() {
-				smb.dmap.Delete(seq)
+				smb.dmap.Delete(mseq)
 			}
 		} else if sm != nil {
 			sz := fileStoreMsgSize(sm.subj, sm.hdr, sm.msg)
@@ -10272,7 +10272,7 @@ func (cfs *consumerFileStore) writeConsumerMeta() error {
 
 // Consumer version.
 func checkConsumerHeader(hdr []byte) (uint8, error) {
-	if hdr == nil || len(hdr) < 2 || hdr[0] != magic {
+	if len(hdr) < 2 || hdr[0] != magic {
 		return 0, errCorruptState
 	}
 	version := hdr[1]

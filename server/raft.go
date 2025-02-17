@@ -3020,18 +3020,23 @@ func (n *raft) trackResponse(ar *appendEntryResponse) {
 	// See if we have items to apply.
 	var sendHB bool
 
-	if results := n.acks[ar.index]; results != nil {
-		results[ar.peer] = struct{}{}
-		if nr := len(results); nr >= n.qn {
-			// We have a quorum.
-			for index := n.commit + 1; index <= ar.index; index++ {
-				if err := n.applyCommit(index); err != nil && err != errNodeClosed {
-					n.error("Got an error applying commit for %d: %v", index, err)
-					break
-				}
+	results := n.acks[ar.index]
+	if results == nil {
+		results = make(map[string]struct{})
+		n.acks[ar.index] = results
+	}
+	results[ar.peer] = struct{}{}
+
+	// We don't count ourselves to account for leader changes, so add 1.
+	if nr := len(results); nr+1 >= n.qn {
+		// We have a quorum.
+		for index := n.commit + 1; index <= ar.index; index++ {
+			if err := n.applyCommit(index); err != nil && err != errNodeClosed {
+				n.error("Got an error applying commit for %d: %v", index, err)
+				break
 			}
-			sendHB = n.prop.len() == 0
 		}
+		sendHB = n.prop.len() == 0
 	}
 	n.Unlock()
 
@@ -3562,8 +3567,13 @@ CONTINUE:
 				if l > paeWarnThreshold && l%paeWarnModulo == 0 {
 					n.warn("%d append entries pending", len(n.pae))
 				}
-			} else if l%paeWarnModulo == 0 {
-				n.debug("Not saving to append entries pending")
+			} else {
+				// Invalidate cache entry at this index, we might have
+				// stored it previously with a different value.
+				delete(n.pae, n.pindex)
+				if l%paeWarnModulo == 0 {
+					n.debug("Not saving to append entries pending")
+				}
 			}
 		} else {
 			// This is a replay on startup so just take the appendEntry version.
@@ -3765,8 +3775,6 @@ func (n *raft) sendAppendEntry(entries []*Entry) {
 		if err := n.storeToWAL(ae); err != nil {
 			return
 		}
-		// We count ourselves.
-		n.acks[n.pindex] = map[string]struct{}{n.id: {}}
 		n.active = time.Now()
 
 		// Save in memory for faster processing during applyCommit.
@@ -4143,11 +4151,10 @@ func (n *raft) processVoteRequest(vr *voteRequest) error {
 		n.vote = vr.candidate
 		n.writeTermVote()
 		n.resetElectionTimeout()
-	} else {
-		if vr.term >= n.term && n.vote == noVote {
-			n.term = vr.term
-			n.resetElect(randCampaignTimeout())
-		}
+	} else if n.vote == noVote && n.State() != Candidate {
+		// We have a more up-to-date log, and haven't voted yet.
+		// Start campaigning earlier, but only if not candidate already, as that would short-circuit us.
+		n.resetElect(randCampaignTimeout())
 	}
 
 	// Term might have changed, make sure response has the most current
@@ -4290,6 +4297,10 @@ func (n *raft) switchToFollowerLocked(leader string) {
 	n.aflr = 0
 	n.leaderState.Store(false)
 	n.lxfer = false
+	// Reset acks, we can't assume acks from a previous term are still valid in another term.
+	if len(n.acks) > 0 {
+		n.acks = make(map[uint64]map[string]struct{})
+	}
 	n.updateLeader(leader)
 	n.switchState(Follower)
 }

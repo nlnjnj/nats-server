@@ -3198,6 +3198,77 @@ func TestJetStreamClusterAccountInfoAndLimits(t *testing.T) {
 	}
 }
 
+func TestJetStreamClusterMaxStreamsReached(t *testing.T) {
+	c := createJetStreamClusterExplicit(t, "R3S", 3)
+	defer c.shutdown()
+
+	nc, js := jsClientConnect(t, c.randomNonLeader())
+	defer nc.Close()
+
+	// Adjust our limits.
+	c.updateLimits("$G", map[string]JetStreamAccountLimits{
+		_EMPTY_: {
+			MaxMemory:  1024,
+			MaxStore:   1024,
+			MaxStreams: 1,
+		},
+	})
+
+	// Many stream creations in parallel for the same stream should not result in
+	// maximum number of streams reached error. All should have a successful response.
+	var wg sync.WaitGroup
+	for i := 0; i < 15; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := js.AddStream(&nats.StreamConfig{
+				Name:     "TEST",
+				Subjects: []string{"foo"},
+				Replicas: 1,
+			})
+			require_NoError(t, err)
+		}()
+	}
+	wg.Wait()
+	require_NoError(t, js.DeleteStream("TEST"))
+
+	// Adjust our limits.
+	c.updateLimits("$G", map[string]JetStreamAccountLimits{
+		_EMPTY_: {
+			MaxMemory:  1024,
+			MaxStore:   1024,
+			MaxStreams: 2,
+		},
+	})
+
+	// Setup streams beforehand.
+	for d := 0; d < 2; d++ {
+		_, err := js.AddStream(&nats.StreamConfig{
+			Name:     fmt.Sprintf("TEST-%d", d),
+			Subjects: []string{fmt.Sprintf("foo.%d", d)},
+			Replicas: 1,
+		})
+		require_NoError(t, err)
+	}
+
+	// Many stream creations in parallel for streams that already exist should not result in
+	// maximum number of streams reached error. All should have a successful response.
+	for i := 0; i < 15; i++ {
+		wg.Add(1)
+		d := i % 2
+		go func() {
+			defer wg.Done()
+			_, err := js.AddStream(&nats.StreamConfig{
+				Name:     fmt.Sprintf("TEST-%d", d),
+				Subjects: []string{fmt.Sprintf("foo.%d", d)},
+				Replicas: 1,
+			})
+			require_NoError(t, err)
+		}()
+	}
+	wg.Wait()
+}
+
 func TestJetStreamClusterStreamLimits(t *testing.T) {
 	c := createJetStreamClusterExplicit(t, "R3S", 3)
 	defer c.shutdown()
@@ -7614,6 +7685,116 @@ func TestJetStreamClusterAccountStatsForReplicatedStreams(t *testing.T) {
 	// during the nrg propsal to the R5 peers.
 	require_True(t, accStats.Sent.Msgs >= 50)
 	require_True(t, accStats.Sent.Bytes >= accStats.Received.Bytes*4)
+}
+
+func TestJetStreamClusterRecreateConsumerFromMetaSnapshot(t *testing.T) {
+	c := createJetStreamClusterExplicit(t, "R3S", 3)
+	defer c.shutdown()
+
+	nc, js := jsClientConnect(t, c.randomServer())
+	defer nc.Close()
+
+	// Initial setup.
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "TEST",
+		Subjects: []string{"foo"},
+		Replicas: 3,
+	})
+	require_NoError(t, err)
+	_, err = js.Publish("foo", nil)
+	require_NoError(t, err)
+	_, err = js.AddConsumer("TEST", &nats.ConsumerConfig{Durable: "CONSUMER"})
+	require_NoError(t, err)
+
+	// Wait for all servers to be fully up-to-date.
+	checkFor(t, 2*time.Second, 500*time.Millisecond, func() error {
+		if err = checkState(t, c, globalAccountName, "TEST"); err != nil {
+			return err
+		}
+		for _, s := range c.servers {
+			if acc, err := s.lookupAccount(globalAccountName); err != nil {
+				return err
+			} else if mset, err := acc.lookupStream("TEST"); err != nil {
+				return err
+			} else if o := mset.lookupConsumer("CONSUMER"); o == nil {
+				return errors.New("consumer doesn't exist")
+			}
+		}
+		return nil
+	})
+
+	// Shutdown a random server.
+	rs := c.randomServer()
+	rs.Shutdown()
+	rs.WaitForShutdown()
+
+	// Recreate connection, since we could have shutdown the server we were connected to.
+	nc.Close()
+	c.waitOnLeader()
+	nc, js = jsClientConnect(t, c.randomServer())
+	defer nc.Close()
+
+	// Recreate consumer.
+	require_NoError(t, js.DeleteConsumer("TEST", "CONSUMER"))
+	_, err = js.AddConsumer("TEST", &nats.ConsumerConfig{Durable: "CONSUMER"})
+	require_NoError(t, err)
+
+	// Wait for all servers (except for the one that's down) to have recreated the consumer.
+	var consumerRg string
+	checkFor(t, 2*time.Second, 500*time.Millisecond, func() error {
+		consumerRg = _EMPTY_
+		for _, s := range c.servers {
+			if s == rs {
+				continue
+			}
+			if acc, err := s.lookupAccount(globalAccountName); err != nil {
+				return err
+			} else if mset, err := acc.lookupStream("TEST"); err != nil {
+				return err
+			} else if o := mset.lookupConsumer("CONSUMER"); o == nil {
+				return errors.New("consumer doesn't exist")
+			} else if ccrg := o.raftNode().Group(); consumerRg == _EMPTY_ {
+				consumerRg = ccrg
+			} else if consumerRg != ccrg {
+				return errors.New("consumer raft groups don't match")
+			}
+		}
+		return nil
+	})
+
+	// Install snapshots on all remaining servers to "hide" the intermediate consumer recreate requests.
+	for _, s := range c.servers {
+		if s != rs {
+			sjs := s.getJetStream()
+			require_NotNil(t, sjs)
+			snap, err := sjs.metaSnapshot()
+			require_NoError(t, err)
+			sjs.mu.RLock()
+			meta := sjs.cluster.meta
+			sjs.mu.RUnlock()
+			require_NoError(t, meta.InstallSnapshot(snap))
+		}
+	}
+
+	// Restart the server, it should receive a meta snapshot and recognize the consumer recreation.
+	rs = c.restartServer(rs)
+	checkFor(t, 2*time.Second, 500*time.Millisecond, func() error {
+		consumerRg = _EMPTY_
+		for _, s := range c.servers {
+			if acc, err := s.lookupAccount(globalAccountName); err != nil {
+				return err
+			} else if mset, err := acc.lookupStream("TEST"); err != nil {
+				return err
+			} else if o := mset.lookupConsumer("CONSUMER"); o == nil {
+				return errors.New("consumer doesn't exist")
+			} else if ccrg := o.raftNode().Group(); consumerRg == _EMPTY_ {
+				consumerRg = ccrg
+			} else if consumerRg != ccrg {
+				return errors.New("consumer raft groups don't match")
+			}
+		}
+		return nil
+	})
 }
 
 //
