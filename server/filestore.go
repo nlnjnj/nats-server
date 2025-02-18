@@ -9021,11 +9021,14 @@ func (fs *fileStore) _writeFullState(force bool) (rerr error) {
 	var dmapTotalLen int
 	for _, mb := range fs.blks {
 		mb.mu.RLock()
+		fseq := atomic.LoadUint64(&mb.first.seq)
+		lseq := atomic.LoadUint64(&mb.last.seq)
+
 		buf = binary.AppendUvarint(buf, uint64(mb.index))
 		buf = binary.AppendUvarint(buf, mb.bytes)
-		buf = binary.AppendUvarint(buf, atomic.LoadUint64(&mb.first.seq))
+		buf = binary.AppendUvarint(buf, fseq)
 		buf = binary.AppendVarint(buf, mb.first.ts-baseTime)
-		buf = binary.AppendUvarint(buf, atomic.LoadUint64(&mb.last.seq))
+		buf = binary.AppendUvarint(buf, lseq)
 		buf = binary.AppendVarint(buf, mb.last.ts-baseTime)
 
 		numDeleted := mb.dmap.Size()
@@ -9042,6 +9045,14 @@ func (fs *fileStore) _writeFullState(force bool) (rerr error) {
 			lbi = mb.index
 			mb.ensureLastChecksumLoaded()
 			copy(lchk[0:], mb.lchk[:])
+		}
+		expectedMsgs := int(lseq-fseq) + 1 - numDeleted
+		if int(mb.msgs) != expectedMsgs {
+			assert.Unreachable("fs/mb state mismatch", map[string]any{
+				"stream":   fs.cfg.Name,
+				"mb.msgs":  mb.msgs,
+				"expected": expectedMsgs,
+			})
 		}
 		updateTrackingState(&mstate, mb)
 		mb.mu.RUnlock()
