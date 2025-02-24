@@ -2812,6 +2812,7 @@ func (o *consumer) applyState(state *ConsumerState) {
 		return
 	}
 
+	o.srv.Warnf("DEBUG: applyState: state=%v", state)
 	o.sseq = state.Delivered.Stream + 1
 	o.dseq = state.Delivered.Consumer + 1
 	o.adflr = state.AckFloor.Consumer
@@ -3083,6 +3084,8 @@ func (o *consumer) processAckMsg(sseq, dseq, dc uint64, reply string, doSample b
 		return false
 	}
 
+	o.srv.Warnf("DEBUG: processAckMsg: sseq=%d, dc=%d, dseq=%d, o.sseq=%d", sseq, dc, dseq, o.sseq)
+
 	// Check if this ack is above the current pointer to our next to deliver.
 	// This could happen on a cooperative takeover with high speed deliveries.
 	if sseq >= o.sseq {
@@ -3140,6 +3143,8 @@ func (o *consumer) processAckMsg(sseq, dseq, dc uint64, reply string, doSample b
 					}
 				}
 			}
+		} else {
+			o.srv.Warnf("DEBUG: processAckMsg: not pending sseq=%d", sseq)
 		}
 		delete(o.rdc, sseq)
 		o.removeFromRedeliverQueue(sseq)
@@ -4819,6 +4824,8 @@ func (o *consumer) deliverMsg(dsubj, ackReply string, pmsg *jsPubMsg, dc uint64,
 
 	// Cant touch pmsg after this sending so capture what we need.
 	seq, ts := pmsg.seq, pmsg.ts
+
+	o.srv.Warnf("DEBUG: deliverMsg: seq=%d, dc=%d, dseq=%d", seq, dc, dseq)
 
 	// Update delivered first.
 	o.updateDelivered(dseq, seq, dc, ts)
