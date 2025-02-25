@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"reflect"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -3020,6 +3021,7 @@ func (o *consumer) infoWithSnapAndReply(snap bool, reply string) *ConsumerInfo {
 
 // Will signal us that new messages are available. Will break out of waiting.
 func (o *consumer) signalNewMessages() {
+	o.srv.Warnf("DEBUG: signalNewMessages: stack=%s", debug.Stack())
 	// Kick our new message channel
 	select {
 	case o.mch <- struct{}{}:
@@ -3786,6 +3788,7 @@ func (o *consumer) processNextMsgRequest(reply string, msg []byte) {
 	}
 
 	// Check payload here to see if they sent in batch size or a formal request.
+	o.srv.Warnf("DEBUG: processNextMsgRequest: msg=%s", msg)
 	expires, batchSize, maxBytes, noWait, hb, hbt, priorityGroup, err := nextReqFromMsg(msg)
 	if err != nil {
 		sendErr(400, fmt.Sprintf("Bad Request - %v", err))
@@ -4478,6 +4481,7 @@ func (o *consumer) loopAndGatherMsgs(qch chan struct{}) {
 			}
 		} else if o.waiting.isEmpty() {
 			// If we are in pull mode and no one is waiting already break and wait.
+			o.srv.Warnf("DEBUG: loopAndGatherMsgs: waiting empty")
 			goto waitForMsgs
 		}
 
@@ -4492,6 +4496,7 @@ func (o *consumer) loopAndGatherMsgs(qch chan struct{}) {
 
 		// On error either wait or return.
 		if err != nil || pmsg == nil {
+			o.srv.Warnf("DEBUG: getNextMsg: err=%v", err)
 			// On EOF we can optionally fast sync num pending state.
 			if err == ErrStoreEOF {
 				o.checkNumPendingOnEOF()
@@ -4552,6 +4557,7 @@ func (o *consumer) loopAndGatherMsgs(qch chan struct{}) {
 				wr.hbt = time.Now().Add(wr.hb)
 			}
 		} else {
+			o.srv.Warnf("DEBUG: reset: dc=%d, pmsg.seq=%d, o.sseq-1=%d, onRedeliverQueue=%v", dc, pmsg.seq, o.sseq-1, o.onRedeliverQueue(pmsg.seq))
 			// We will redo this one as long as this is not a redelivery.
 			// Need to also test that this is not going backwards since if
 			// we fail to deliver we can end up here from rdq but we do not
@@ -4620,6 +4626,7 @@ func (o *consumer) loopAndGatherMsgs(qch chan struct{}) {
 		continue
 
 	waitForMsgs:
+		o.srv.Warnf("DEBUG: waitForMsgs: waiting.isEmpty()=%v", o.waiting.isEmpty())
 		// If we were in a replay state check to see if we are caught up. If so clear.
 		if o.replay && o.sseq > lseq {
 			o.replay = false
@@ -4636,6 +4643,8 @@ func (o *consumer) loopAndGatherMsgs(qch chan struct{}) {
 					expires = time.Millisecond
 				}
 				wrExp = time.NewTimer(expires).C
+
+				o.srv.Warnf("DEBUG: waitForMsgs: expires=%s", expires)
 			}
 		}
 
