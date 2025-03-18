@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/antithesishq/antithesis-sdk-go/assert"
 	"hash"
 	"math"
 	"math/rand"
@@ -26,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1177,7 +1179,7 @@ func (n *raft) InstallSnapshot(data []byte) error {
 		term = ae.term
 	}
 
-	n.debug("Installing snapshot of %d bytes", len(data))
+	n.debug("Installing snapshot of %d bytes (term=%d, cterm=%d, pterm=%d, applied=%d)", len(data), term, n.term, n.pterm, n.applied)
 
 	return n.installSnapshot(&snapshot{
 		lastTerm:  term,
@@ -2906,6 +2908,7 @@ func (n *raft) applyCommit(index uint64) error {
 		defer delete(n.pae, index)
 	}
 
+	n.debug("applyCommit, index=%d (term=%d, pterm=%d, pindex=%d, pcommit=%d, applied=%d)", index, n.term, n.pterm, n.pindex, n.commit, n.applied)
 	n.commit = index
 	ae.buf = nil
 
@@ -3240,6 +3243,17 @@ func (n *raft) truncateWAL(term, index uint64) {
 
 	if term == 0 && index == 0 {
 		n.warn("Resetting WAL state")
+		ss := n.wal.State()
+		assert.Unreachable("resetWal_state", map[string]any{
+			"stack":   string(debug.Stack()),
+			"term":    n.term,
+			"pterm":   n.pterm,
+			"pindex":  n.pindex,
+			"commit":  n.commit,
+			"applied": n.applied,
+			"fseq":    ss.FirstSeq,
+			"lseq":    ss.LastSeq,
+		})
 	}
 
 	defer func() {
@@ -3263,6 +3277,17 @@ func (n *raft) truncateWAL(term, index uint64) {
 		// We will not have holes, so this means we do not have this message stored anymore.
 		if err == ErrInvalidSequence {
 			n.debug("Resetting WAL")
+			ss := n.wal.State()
+			assert.Unreachable("resetWal_invalidSeq", map[string]any{
+				"stack":   string(debug.Stack()),
+				"term":    n.term,
+				"pterm":   n.pterm,
+				"pindex":  n.pindex,
+				"commit":  n.commit,
+				"applied": n.applied,
+				"fseq":    ss.FirstSeq,
+				"lseq":    ss.LastSeq,
+			})
 			n.wal.Truncate(0)
 			// If our index is non-zero use PurgeEx to set us to the correct next index.
 			if index > 0 {
@@ -3437,7 +3462,7 @@ func (n *raft) processAppendEntry(ae *appendEntry, sub *subscription) {
 	if ae.pterm != n.pterm || ae.pindex != n.pindex {
 		// Check if this is a lower or equal index than what we were expecting.
 		if ae.pindex <= n.pindex {
-			n.debug("AppendEntry detected pindex less than/equal to ours: %d:%d vs %d:%d", ae.pterm, ae.pindex, n.pterm, n.pindex)
+			n.debug("AppendEntry detected pindex less than/equal to ours: %d:%d vs %d:%d (commit=%d, applied=%d)", ae.pterm, ae.pindex, n.pterm, n.pindex, n.commit, n.applied)
 			var ar *appendEntryResponse
 			var success bool
 
