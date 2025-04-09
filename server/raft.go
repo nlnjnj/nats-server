@@ -3315,6 +3315,8 @@ func (n *raft) processAppendEntry(ae *appendEntry, sub *subscription) {
 		n.resetElectionTimeout()
 	}
 
+	n.debug("processAppendEntry: %v", ae)
+
 	// Just return if closed or we had previous write error.
 	if n.State() == Closed || n.werr != nil {
 		n.Unlock()
@@ -3798,6 +3800,7 @@ func (n *raft) sendAppendEntry(entries []*Entry) {
 			n.warn("%d append entries pending", len(n.pae))
 		}
 	}
+	n.debug("sendAppendEntry: shouldStore=%v, ae=%v", shouldStore, ae)
 	n.sendRPC(n.asubj, n.areply, ae.buf)
 	if !shouldStore {
 		ae.returnToPool()

@@ -16,9 +16,13 @@ package thw
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math"
+	"runtime/debug"
 	"time"
+
+	"github.com/antithesishq/antithesis-sdk-go/assert"
 )
 
 // Error for when we can not locate a task for removal or updates.
@@ -90,6 +94,7 @@ func (hw *HashWheel) Add(seq uint64, expires int64) error {
 	if _, ok := hw.wheel[pos].entries[seq]; !ok {
 		hw.count++
 	}
+	fmt.Printf("DEBUG: THW.Add, seq=%d, expires=%d, hw.count=%d\n", seq, expires, hw.count)
 	hw.wheel[pos].entries[seq] = expires
 
 	// Update slot's lowest expiration if this is earlier.
@@ -181,6 +186,12 @@ func (hw *HashWheel) ExpireTasks(callback func(seq uint64, expires int64) bool) 
 		for seq, expires := range slot.entries {
 			if expires <= now && callback(seq, expires) {
 				delete(slot.entries, seq)
+				fmt.Printf("DEBUG: THW.ExpireTasks, seq=%d, expires=%d, len(slot.entries)=%d\n", seq, expires, len(slot.entries))
+				if hw.count == 0 {
+					assert.Unreachable("ExpireTasks hw.count=0", map[string]any{
+						"stack": string(debug.Stack()),
+					})
+				}
 				hw.count--
 				updateLowest = true
 				continue
