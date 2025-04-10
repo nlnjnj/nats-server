@@ -94,7 +94,7 @@ func (hw *HashWheel) Add(seq uint64, expires int64) error {
 	if _, ok := hw.wheel[pos].entries[seq]; !ok {
 		hw.count++
 	}
-	fmt.Printf("DEBUG: THW.Add, seq=%d, expires=%d, hw.count=%d\n", seq, expires, hw.count)
+	fmt.Printf("DEBUG: THW.Add, seq=%d, expires=%d, pos=%d, hw.count=%d\n", seq, expires, pos, hw.count)
 	hw.wheel[pos].entries[seq] = expires
 
 	// Update slot's lowest expiration if this is earlier.
@@ -112,6 +112,7 @@ func (hw *HashWheel) Add(seq uint64, expires int64) error {
 // Remove removes a timer task.
 func (hw *HashWheel) Remove(seq uint64, expires int64) error {
 	pos := hw.getPosition(expires)
+	fmt.Printf("DEBUG: THW.Remove, seq=%d, expires=%d, pos=%d, hw.count=%d\n", seq, expires, pos, hw.count)
 	s := hw.wheel[pos]
 	if s == nil {
 		return ErrTaskNotFound
@@ -146,6 +147,7 @@ func (hw *HashWheel) Remove(seq uint64, expires int64) error {
 
 // Update updates the expiration time of an existing timer task.
 func (hw *HashWheel) Update(seq uint64, oldExpires int64, newExpires int64) error {
+	fmt.Printf("DEBUG: THW.Update, seq=%d, oldExpires=%d, newExpires=%d, hw.count=%d\n", seq, oldExpires, newExpires, hw.count)
 	// Remove from old position.
 	if err := hw.Remove(seq, oldExpires); err != nil {
 		return err
@@ -167,6 +169,11 @@ func (hw *HashWheel) ExpireTasks(callback func(seq uint64, expires int64) bool) 
 	startPos, exitPos := hw.getPosition(hw.lowest), hw.getPosition(now+tickDuration)
 	var updateLowest bool
 
+	fmt.Printf("DEBUG: THW.ExpireTasks start, startPos=%d, exitPos=%d, hw.count=%d\n", startPos, exitPos, hw.count)
+	defer func() {
+		fmt.Printf("DEBUG: THW.ExpireTasks end, startPos=%d, exitPos=%d, hw.count=%d\n", startPos, exitPos, hw.count)
+	}()
+
 	for offset := int64(0); ; offset++ {
 		pos := (startPos + offset) & wheelMask
 		if pos == exitPos {
@@ -186,13 +193,13 @@ func (hw *HashWheel) ExpireTasks(callback func(seq uint64, expires int64) bool) 
 		for seq, expires := range slot.entries {
 			if expires <= now && callback(seq, expires) {
 				delete(slot.entries, seq)
-				fmt.Printf("DEBUG: THW.ExpireTasks, seq=%d, expires=%d, len(slot.entries)=%d\n", seq, expires, len(slot.entries))
 				if hw.count == 0 {
 					assert.Unreachable("ExpireTasks hw.count=0", map[string]any{
 						"stack": string(debug.Stack()),
 					})
 				}
 				hw.count--
+				fmt.Printf("DEBUG: THW.ExpireTasks, seq=%d, expires=%d, len(slot.entries)=%d, pos=%d, hw.count=%d\n", seq, expires, len(slot.entries), pos, hw.count)
 				updateLowest = true
 				continue
 			}
@@ -224,10 +231,11 @@ func (hw *HashWheel) Count() uint64 {
 	return hw.count
 }
 
-// AppendEncode writes out the contents of the THW into a binary snapshot
+// Encode writes out the contents of the THW into a binary snapshot
 // and returns it. The high seq number is included in the snapshot and will
 // be returned on decode.
 func (hw *HashWheel) Encode(highSeq uint64) []byte {
+	fmt.Printf("DEBUG: THW.Encode, highSeq=%d, hw.count=%d\n", highSeq, hw.count)
 	b := make([]byte, 0, headerLen+(hw.count*(2*binary.MaxVarintLen64)))
 	b = append(b, 1)                                  // Magic version
 	b = binary.LittleEndian.AppendUint64(b, hw.count) // Entry count
@@ -270,5 +278,6 @@ func (hw *HashWheel) Decode(b []byte) (uint64, error) {
 		hw.Add(v, ts)
 		b = b[tn+vn:]
 	}
+	fmt.Printf("DEBUG: THW.Decode, highSeq=%d, hw.count=%d\n", stamp, hw.count)
 	return stamp, nil
 }
